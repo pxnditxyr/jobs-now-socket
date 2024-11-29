@@ -1,0 +1,20 @@
+{
+  "name": "jobs-now-socket-server",
+  "version": "0.0.1",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --env-file=.env index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "socket.io": "^4.8.1",
+    "sqlite3": "^5.1.7",
+    "uuid": "^11.0.3"
+  }
+}
