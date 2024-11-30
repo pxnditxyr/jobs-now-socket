@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const db = require('./database'); // Importamos la conexión a Turso
+const turso = require('./database'); // Importamos la conexión a Turso
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -33,8 +33,10 @@ io.on('connection', (socket) => {
   // Unirse a una conversación específica
   socket.on('joinConversation', async (conversationId) => {
     try {
+      console.log( 'llego joinConversation' )
+      console.log({ conversationId })
       // Verificar si el usuario es participante de la conversación
-      const isParticipant = await db.execute({
+      const isParticipant = await turso.execute({
         sql: `SELECT * FROM ConversationParticipant WHERE conversationId = ? AND userId = ? AND status = ?`,
         args: [conversationId, socket.userId, true],
       });
@@ -53,6 +55,7 @@ io.on('connection', (socket) => {
 
   // Escuchar mensajes enviados por el cliente
   socket.on('sendMessage', async (message) => {
+    console.log( 'llego mensaje' )
     const { conversationId, content, messageType = 'text', attachmentUrl = null } = message;
     const senderId = socket.userId;
 
@@ -60,19 +63,20 @@ io.on('connection', (socket) => {
       socket.emit('errorMessage', { error: 'Usuario no autenticado.' });
       return;
     }
+    console.log({ message, senderId })
 
     try {
-      // Verificar si la conversación existe y el usuario es participante
-      const [conversationResult, participantResult] = await Promise.all([
-        db.execute({
-          sql: `SELECT * FROM Conversation WHERE id = ?`,
-          args: [conversationId],
-        }),
-        db.execute({
-          sql: `SELECT * FROM ConversationParticipant WHERE conversationId = ? AND userId = ? AND status = ?`,
-          args: [conversationId, senderId, true],
-        }),
-      ]);
+      console.log( 'entra al try' )
+
+      const conversationResult = await turso.execute({
+        sql: `SELECT * FROM Conversation WHERE id = ?`,
+        args: [conversationId],
+      })
+
+      const participantResult = await turso.execute({
+        sql: `SELECT * FROM ConversationParticipant WHERE conversationId = ? AND userId = ? AND status = ?`,
+        args: [conversationId, senderId, true],
+      })
 
       if (conversationResult.rows.length === 0) {
         socket.emit('errorMessage', { error: 'La conversación no existe.' });
@@ -84,24 +88,41 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Insertar el mensaje en la base de datos
+      //// Insertar el mensaje en la base de datos
       const messageId = uuidv4();
       const timestamp = new Date().toISOString();
 
       // Iniciar una transacción
-      await db.batch(async (tx) => {
-        await tx.execute({
-          sql: `INSERT INTO Message (id, conversationId, senderId, content, messageType, attachmentUrl, createdAt, updatedAt, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          args: [messageId, conversationId, senderId, content, messageType, attachmentUrl, timestamp, timestamp, true],
-        });
+      //await turso.batch(async (tx) => {
+      //  await tx.execute({
+      //    sql: `INSERT INTO Message (id, conversationId, senderId, content, messageType, attachmentUrl, createdAt, updatedAt, status)
+      //          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      //    args: [messageId, conversationId, senderId, content, messageType, attachmentUrl, timestamp, timestamp, true],
+      //  });
+      //
+      //  await tx.execute({
+      //    sql: `INSERT INTO MessageStatus (id, messageId, userId, isRead, readAt, createdAt, updatedAt)
+      //          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      //    args: [uuidv4(), messageId, senderId, false, null, timestamp, timestamp],
+      //  });
+      //});
 
-        await tx.execute({
-          sql: `INSERT INTO MessageStatus (id, messageId, userId, isRead, readAt, createdAt, updatedAt)
-                VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          args: [uuidv4(), messageId, senderId, false, null, timestamp, timestamp],
-        });
-      });
+      const result = await turso.batch(
+        [
+          {
+            sql: `INSERT INTO Message (id, conversationId, senderId, content, messageType, attachmentUrl, createdAt, updatedAt, status)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [ messageId, conversationId, senderId, content, messageType, attachmentUrl, timestamp, timestamp, true ],
+          },
+          {
+            sql: `INSERT INTO MessageStatus (id, messageId, userId, isRead, readAt, createdAt, updatedAt)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            args: [ uuidv4(), messageId, senderId, false, null, timestamp, timestamp ],
+          }
+        ]
+      )
+
+      console.log({ result })
 
       // Construir el mensaje para enviar a los clientes
       const savedMessage = {
@@ -128,7 +149,10 @@ io.on('connection', (socket) => {
   // Obtener mensajes de una conversación
   socket.on('getConversationMessages', async ({ conversationId, limit = 50, offset = 0 }) => {
     try {
-      const messagesResult = await db.execute({
+      console.log( 'llego getConversationMessages' )
+      console.log({ conversationId, limit, offset })
+
+      const messagesResult = await turso.execute({
         sql: `
           SELECT m.*, ms.isRead, ms.readAt
           FROM Message m
@@ -154,10 +178,12 @@ io.on('connection', (socket) => {
 
   // Obtener conversaciones del usuario
   socket.on('getUserConversations', async () => {
+    console.log( 'llego getUserConversations' )
+
     const userId = socket.userId;
 
     try {
-      const conversationsResult = await db.execute({
+      const conversationsResult = await turso.execute({
         sql: `
           SELECT c.*
           FROM Conversation c
@@ -170,7 +196,7 @@ io.on('connection', (socket) => {
 
       const conversations = await Promise.all(
         conversationsResult.rows.map(async (conversation) => {
-          const participantsResult = await db.execute({
+          const participantsResult = await turso.execute({
             sql: `
               SELECT u.id, u.name, u.lastName, u.avatar
               FROM ConversationParticipant cp
